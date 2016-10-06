@@ -4,12 +4,9 @@ using System.Linq;
 using NServiceBus;
 using NServiceBus.TimeoutPersisters.RavenDB;
 using Raven.Abstractions.Commands;
+using Raven.Abstractions.Data;
 using Raven.Client.Document;
-using Raven.Client.Linq;
-using Raven.Imports.Newtonsoft.Json;
-using Raven.Imports.Newtonsoft.Json.Linq;
 using Raven.Json.Linq;
-using JsonExtensions = Raven.Abstractions.Extensions.JsonExtensions;
 
 namespace Migrator
 {
@@ -27,7 +24,7 @@ namespace Migrator
 
             var timeOutMigrator = new TimeOutMigrator();
             var numberOfDocumentsUpdated = timeOutMigrator.Migrate(ravenUrl, apiKey, dataBaseName, destinationServerName);
-            Console.Write($"I updated {numberOfDocumentsUpdated} for you");
+            Console.Write($"I updated {numberOfDocumentsUpdated} timeouts for you");
             Console.Read();
         }
 
@@ -70,12 +67,12 @@ namespace Migrator
                     var start = 0;
                     while (true)
                     {
-                        var current = session.Query<RavenJObject>().Take(1024).Skip(start).ToList();
+                        var current = session.Query<TimeoutData>().Take(1024).Skip(start).ToList();
                         if (current.Count == 0)
                             break;
 
                         start += current.Count;
-                        current.ForEach(x => allTimeOuts.Add(JsonExtensions.JsonDeserialization<TimeoutData>(x)));
+                        allTimeOuts.AddRange(current);
                     }
                 }
                 var updateTimeOutCommands = GetTimeOutDataCommands(allTimeOuts, destinationServerName);
@@ -97,10 +94,18 @@ namespace Migrator
                 timeoutData.Headers["NServiceBus.OriginatingEndpoint"] = ReplaceMachineName(timeoutData.Headers["NServiceBus.Timeout.RouteExpiredTimeoutTo"],
                         destinationServerName);
 
-                yield return new PutCommandData
+                yield return new PatchCommandData()
                 {
                     Key = timeoutData.Id,
-                    Document = RavenJObject.FromObject(timeoutData)
+                    Patches = new[]
+                    {
+                        new PatchRequest
+                        {
+                            Type = PatchCommandType.Modify,
+                            Name = "Destination",
+                            Value = RavenJToken.FromObject(new Address(timeoutData.Destination.Queue, destinationServerName))
+                        }
+                    }
                 };
             }
         }
