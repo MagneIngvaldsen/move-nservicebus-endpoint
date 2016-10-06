@@ -1,12 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using NServiceBus;
 using NServiceBus.TimeoutPersisters.RavenDB;
-using Raven.Abstractions.Commands;
-using Raven.Abstractions.Data;
-using Raven.Client.Document;
-using Raven.Json.Linq;
 
 namespace Migrator
 {
@@ -23,8 +16,8 @@ namespace Migrator
             var destinationServerName = Console.ReadLine();
 
             var timeOutMigrator = new TimeOutMigrator();
-            var numberOfDocumentsUpdated = timeOutMigrator.Migrate(ravenUrl, apiKey, dataBaseName, destinationServerName);
-            Console.Write($"I updated {numberOfDocumentsUpdated} timeouts for you");
+            timeOutMigrator.Migrate(ravenUrl, apiKey, dataBaseName, destinationServerName);
+            Console.Write($"I am done");
             Console.Read();
         }
 
@@ -47,147 +40,6 @@ namespace Migrator
 
             }
             return ravenUrl;
-        }
-    }
-
-    internal class TimeOutMigrator
-    {
-        public int Migrate(string ravenUrl, string apiKey, string dataBaseName, string destinationServerName)
-        {
-            using (var store = new DocumentStore
-            {
-                Url = ravenUrl,
-                DefaultDatabase = dataBaseName,
-                ApiKey = apiKey
-            }.Initialize())
-            {
-                var allTimeOuts = new List<TimeoutData>();
-                using (var session = store.OpenSession())
-                {
-                    var start = 0;
-                    while (true)
-                    {
-                        var current = session.Query<TimeoutData>().Take(1024).Skip(start).ToList();
-                        if (current.Count == 0)
-                            break;
-
-                        start += current.Count;
-                        allTimeOuts.AddRange(current);
-                    }
-                }
-                var updateTimeOutCommands = GetTimeOutDataCommands(allTimeOuts, destinationServerName);
-                var batchResults = store.DatabaseCommands.Batch(updateTimeOutCommands);
-                return batchResults.Length;
-            }
-        }
-
-        private IEnumerable<ICommandData> GetTimeOutDataCommands(List<TimeoutData> allTimeOuts, string destinationServerName)
-        {
-            foreach (var timeoutData in allTimeOuts)
-            {
-                timeoutData.Destination = new Address(timeoutData.Destination.Queue, destinationServerName);
-                timeoutData.OwningTimeoutManager = ReplaceMachineName(timeoutData.OwningTimeoutManager,
-                    destinationServerName);
-                timeoutData.Headers["NServiceBus.Timeout.RouteExpiredTimeoutTo"] =
-                    ReplaceMachineName(timeoutData.Headers["NServiceBus.Timeout.RouteExpiredTimeoutTo"],
-                        destinationServerName);
-                timeoutData.Headers["NServiceBus.OriginatingEndpoint"] = ReplaceMachineName(timeoutData.Headers["NServiceBus.Timeout.RouteExpiredTimeoutTo"],
-                        destinationServerName);
-
-                yield return new PatchCommandData()
-                {
-                    Key = timeoutData.Id,
-                    Patches = new[]
-                    {
-                        new PatchRequest
-                        {
-                            Type = PatchCommandType.Modify,
-                            Name = "Destination",
-                            Value = RavenJToken.FromObject(new Address(timeoutData.Destination.Queue, destinationServerName))
-                        }
-                    }
-                };
-            }
-        }
-
-        private string ReplaceMachineName(string input, string destinationServerName)
-        {
-            return input.Substring(0, input.IndexOf("@", StringComparison.Ordinal) + 1) + destinationServerName;
-        }
-    }
-}
-
-namespace NServiceBus.TimeoutPersisters.RavenDB
-{
-    internal class TimeoutData
-    {
-        /// <summary>
-        /// Id of this timeout
-        /// 
-        /// </summary>
-        public string Id { get; set; }
-
-        /// <summary>
-        /// The address of the client who requested the timeout.
-        /// 
-        /// </summary>
-        public Address Destination { get; set; }
-
-        /// <summary>
-        /// The saga ID.
-        /// 
-        /// </summary>
-        public Guid SagaId { get; set; }
-
-        /// <summary>
-        /// Additional state.
-        /// 
-        /// </summary>
-        public byte[] State { get; set; }
-
-        /// <summary>
-        /// The time at which the timeout expires.
-        /// 
-        /// </summary>
-        public DateTime Time { get; set; }
-
-        /// <summary>
-        /// The timeout manager that owns this particular timeout
-        /// 
-        /// </summary>
-        public string OwningTimeoutManager { get; set; }
-
-        /// <summary>
-        /// Store the headers to preserve them across timeouts
-        /// 
-        /// </summary>
-        public Dictionary<string, string> Headers { get; set; }
-
-        public TimeoutData()
-        {
-        }
-
-        public TimeoutData(NServiceBus.Timeout.Core.TimeoutData data)
-        {
-            this.Destination = data.Destination;
-            this.SagaId = data.SagaId;
-            this.State = data.State;
-            this.Time = data.Time;
-            this.OwningTimeoutManager = data.OwningTimeoutManager;
-            this.Headers = data.Headers;
-        }
-
-        public NServiceBus.Timeout.Core.TimeoutData ToCoreTimeoutData()
-        {
-            return new NServiceBus.Timeout.Core.TimeoutData()
-            {
-                Destination = this.Destination,
-                Headers = this.Headers,
-                OwningTimeoutManager = this.OwningTimeoutManager,
-                SagaId = this.SagaId,
-                State = this.State,
-                Time = this.Time
-            };
         }
     }
 }
