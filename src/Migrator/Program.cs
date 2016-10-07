@@ -1,5 +1,11 @@
 ﻿using System;
-using NServiceBus.TimeoutPersisters.RavenDB;
+using System.Collections.Generic;
+using System.Linq;
+using Raven.Abstractions.Commands;
+using Raven.Abstractions.Data;
+using Raven.Client;
+using Raven.Client.Document;
+using Raven.Json.Linq;
 
 namespace Migrator
 {
@@ -15,8 +21,18 @@ namespace Migrator
             Console.Write("To what machine name should i move the timeouts?");
             var destinationServerName = Console.ReadLine();
 
-            var timeOutMigrator = new TimeOutMigrator();
-            timeOutMigrator.Migrate(ravenUrl, apiKey, dataBaseName, destinationServerName);
+            using (var store = new DocumentStore
+            {
+                Url = ravenUrl,
+                DefaultDatabase = dataBaseName,
+                ApiKey = apiKey
+            }.Initialize())
+            {
+                var timeoutDataMigrator = new TimeoutDataMigrator(store);
+                timeoutDataMigrator.Migrate(destinationServerName);
+                var sagaDataMigrator = new SagaDataMigrator(store);
+                sagaDataMigrator.Migrate(destinationServerName);
+            }
             Console.Write($"I am done");
             Console.Read();
         }
@@ -37,9 +53,42 @@ namespace Migrator
                     Console.Write("Give me the correct and full url(http://...) of your raven instance: ");
                     ravenUrl = Console.ReadLine();
                 }
-
             }
             return ravenUrl;
+        }
+    }
+
+    internal class SagaDataMigrator
+    {
+        private readonly IDocumentStore _store;
+
+        public SagaDataMigrator(IDocumentStore store)
+        {
+            _store = store;
+        }
+
+        public void Migrate(string destinationServerName)
+        {
+            var patchCommands = new List<PatchCommandData>();
+            using (var session = _store.OpenSession())
+            {
+                var sagaDatas = session.Advanced.DocumentQuery<RavenJObject>()
+                    .Search("Originator", "*", EscapeQueryOptions.AllowAllWildcards)
+                    .ToList();
+                patchCommands.AddRange(from sagaData in sagaDatas
+                    let id = session.Advanced.GetDocumentId(sagaData)
+                    select new PatchCommandData
+                    {
+                        Key = id, Patches = new[]
+                        {
+                            new PatchRequest
+                            {
+                                Name = "Originator", Value = sagaData["Originator"].Value<string>().ReplaceMachineName(destinationServerName)
+                            }
+                        }
+                    });
+            }
+            _store.DatabaseCommands.Batch(patchCommands);
         }
     }
 }
