@@ -22,6 +22,7 @@ namespace Migrator
             var allTimeouts = new List<TimeoutData>();
             using (var session = _store.OpenSession())
             {
+                session.Advanced.MaxNumberOfRequestsPerSession = 1000;
                 var start = 0;
                 while (true)
                 {
@@ -39,7 +40,11 @@ namespace Migrator
                 }
             }
             var updateTimeoutCommands = GetTimeoutDataCommands(allTimeouts, destinationServerName);
-            _store.DatabaseCommands.Batch(updateTimeoutCommands);
+            foreach (var commands in updateTimeoutCommands.Batch(1024))
+            {
+                _store.DatabaseCommands.Batch(commands);
+            }
+            
         }
 
         private static IEnumerable<ICommandData> GetTimeoutDataCommands(IEnumerable<TimeoutData> allTimeouts, string destinationServerName)

@@ -22,6 +22,7 @@ namespace Migrator
             using (var session = _store.OpenSession())
             {
                 var sagaDatas = new List<RavenJObject>();
+                session.Advanced.MaxNumberOfRequestsPerSession = 1000;
                 var start = 0;
                 while (true)
                 {
@@ -51,7 +52,11 @@ namespace Migrator
                         }
                     });
             }
-            _store.DatabaseCommands.Batch(patchCommands);
+            foreach (var commands in patchCommands.Batch(1024))
+            {
+                _store.DatabaseCommands.Batch(commands);
+            }
+            
         }
     }
 }
