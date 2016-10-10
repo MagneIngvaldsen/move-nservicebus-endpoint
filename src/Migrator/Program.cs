@@ -1,4 +1,5 @@
 ﻿using System;
+using NServiceBus;
 using Raven.Client.Document;
 
 namespace Migrator
@@ -14,6 +15,8 @@ namespace Migrator
             var dataBaseName = Console.ReadLine();
             Console.Write("To what machine name should i move the timeouts?");
             var destinationServerName = Console.ReadLine();
+            Console.Write("Is collection names pluralized? this is nservicebus 5.x convention. (Y/n)");
+            var isNotLegacy = Console.ReadLine();
 
             using (var store = new DocumentStore
             {
@@ -22,6 +25,10 @@ namespace Migrator
                 ApiKey = apiKey
             }.Initialize())
             {
+                if (isNotLegacy == "n")
+                {
+                    store.Conventions.FindTypeTagName = t => t.Name;
+                }
                 var timeoutDataMigrator = new TimeoutDataMigrator(store);
                 timeoutDataMigrator.Migrate(destinationServerName);
                 var sagaDataMigrator = new SagaDataMigrator(store);
